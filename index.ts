@@ -21,6 +21,8 @@ const USDC_DECIMALS = 6;
 const USDC_MULTIPLIER = BigNumber.from(10).pow(USDC_DECIMALS);
 const MAX_USDC = BigNumber.from(MAX_TRADE_USD).mul(USDC_MULTIPLIER);
 
+const WETH_MULTIPLIER = BigNumber.from(10).pow(18);
+
 const router = new AlphaRouter({ chainId: ChainId.POLYGON, provider: web3Provider });
 
 const WETH = new Token(
@@ -63,15 +65,15 @@ async function swapTokens(inAmount: CurrencyAmount<Token>, outToken: Token) {
     process.exit(1);
   }
 
-  console.log(`Quote Exact In: ${route.quote.toFixed(18)}`);
-  console.log(`Gas Adjusted Quote In: ${route.quoteGasAdjusted.toFixed(18)}`);
-  console.log(`Gas Used USD: ${route.estimatedGasUsedUSD.toFixed(6)}`);
+  console.log(`Quote Exact In: ${route.quote.toFixed(outToken.decimals)}`);
+  console.log(`Gas Adjusted Quote In: ${route.quoteGasAdjusted.toFixed(outToken.decimals)}`);
+  console.log(`Gas Used USD: ${route.estimatedGasUsedUSD.toFixed(2)}`);
 
 
   const transaction = {
     data: route.methodParameters.calldata,
     to: V3_SWAP_ROUTER_ADDRESS,
-    value: 0,
+    value: BigNumber.from(route.methodParameters.value),
     from: MY_ADDRESS,
     gasPrice: BigNumber.from(route.gasPriceWei),
   };
@@ -97,7 +99,7 @@ async function main() {
   if (wethBalance.gt(0)) {
     if (pricing.latest < pricing.average) {
       console.log('Price is below average and WETH balance is greater than 0, swap WETH for USDC');
-      const MAX_WETH = MAX_USDC.mul(pricing.latest).div(USDC_MULTIPLIER)
+      const MAX_WETH = MAX_USDC.mul(WETH_MULTIPLIER).div(Math.floor(pricing.latest)).div(USDC_MULTIPLIER)
       const amountToSwap = getMaxWETH(wethBalance, MAX_WETH);
       console.log('amountToSwap: ', amountToSwap.toString(), 'WETH Base Units');
       const wethAmount = CurrencyAmount.fromRawAmount(WETH, amountToSwap.toString());
