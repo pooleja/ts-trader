@@ -33,11 +33,11 @@ const getPricing = async (daysForAverage: number): Promise<Pricing> => {
 }
 
 const getMaxUSDC = (currentUsdcBalance: BigNumber, maxUsdcAllowed: BigNumber): BigNumber => {
-  return currentUsdcBalance > maxUsdcAllowed ? maxUsdcAllowed : currentUsdcBalance;
+  return currentUsdcBalance.gt(maxUsdcAllowed) ? maxUsdcAllowed : currentUsdcBalance;
 }
 
 const getMaxWETH = (currentWethBalance: BigNumber, maxWethAllowed: BigNumber): BigNumber => {
-  return currentWethBalance > maxWethAllowed ? maxWethAllowed : currentWethBalance;
+  return currentWethBalance.gt(maxWethAllowed) ? maxWethAllowed : currentWethBalance;
 }
 
 export {
