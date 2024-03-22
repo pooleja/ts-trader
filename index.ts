@@ -1,32 +1,19 @@
 import 'dotenv/config';
-import { AlphaRouter, ChainId, SwapType } from '@uniswap/smart-order-router'
-import { Token, CurrencyAmount, TradeType, Percent } from '@uniswap/sdk-core'
-import { BigNumber, ethers } from 'ethers';
+import { Token, CurrencyAmount, TradeType, Percent, ChainId, Currency} from '@uniswap/sdk-core'
+import { ethers, BigNumber } from 'ethers';
 import { getBalance } from './balances';
 import { getMaxUSDC, getMaxWETH, getPricing } from './pricing';
+import { WETH_ADDRESS, USDC_ADDRESS, SWAP_ROUTER_ADDRESS, DAYS_AVERAGE, MAX_USDC, WETH_MULTIPLIER, USDC_MULTIPLIER, QUOTER_CONTRACT_ADDRESS } from './config';
+import { getPoolInfo } from './pool';
+import { FeeAmount, Pool, Route, SwapOptions, SwapQuoter, SwapRouter, Trade } from '@uniswap/v3-sdk';
 
-const V3_SWAP_ROUTER_ADDRESS = '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45';
+
 const MY_ADDRESS = process.env.MY_ADDRESS!;
 const MY_PRIVATE_KEY = process.env.MY_PRIVATE_KEY!;
 const web3Provider = new ethers.providers.JsonRpcProvider(process.env.PROVIDER_URI!)
 
-const WETH_ADDRESS = '0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619';
-const USDC_ADDRESS = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174';
-
-const DAYS_AVERAGE = 20;
-
-const MAX_TRADE_USD = 25000;
-
-const USDC_DECIMALS = 6;
-const USDC_MULTIPLIER = BigNumber.from(10).pow(USDC_DECIMALS);
-const MAX_USDC = BigNumber.from(MAX_TRADE_USD).mul(USDC_MULTIPLIER);
-
-const WETH_MULTIPLIER = BigNumber.from(10).pow(18);
-
-const router = new AlphaRouter({ chainId: ChainId.POLYGON, provider: web3Provider });
-
 const WETH = new Token(
-  ChainId.POLYGON,
+  ChainId.ARBITRUM_ONE,
   WETH_ADDRESS,
   18,
   'WETH',
@@ -34,49 +21,85 @@ const WETH = new Token(
 );
 
 const USDC = new Token(
-  ChainId.POLYGON,
+  ChainId.ARBITRUM_ONE,
   USDC_ADDRESS,
   6,
   'USDC',
   'USD//C'
 );
 
-async function swapTokens(inAmount: CurrencyAmount<Token>, outToken: Token) {
+async function getOutputQuote(route: Route<Currency, Currency>, inToken: Token, inAmount: CurrencyAmount<Token> ) {  
 
-  const route = await router.route(
+  if (!web3Provider) {
+    throw new Error('Provider required to get pool state')
+  }
+
+  const { calldata } = await SwapQuoter.quoteCallParameters(
+    route,
     inAmount,
-    outToken,
     TradeType.EXACT_INPUT,
     {
-      type: SwapType.SWAP_ROUTER_02,
-      recipient: MY_ADDRESS,
-      slippageTolerance: new Percent(5, 100),
-      deadline: Math.floor(Date.now() / 1000 + 1800)
+      useQuoterV2: true,
     }
-  );
+  )
 
-  if (route === null) {
-    console.log('No route found');
-    process.exit(1);
+  const quoteCallReturnData = await web3Provider.call({
+    to: QUOTER_CONTRACT_ADDRESS,
+    data: calldata,
+  })
+
+  return ethers.utils.defaultAbiCoder.decode(['uint256'], quoteCallReturnData)
+}
+
+async function swapTokens(inAmount: CurrencyAmount<Token>, inToken: Token, outToken: Token) {
+
+  const poolInfo = await getPoolInfo(web3Provider, inToken, outToken)
+
+  const pool = new Pool(
+    inToken,
+    outToken,
+    FeeAmount.MEDIUM,
+    poolInfo.sqrtPriceX96.toString(),
+    poolInfo.liquidity.toString(),
+    poolInfo.tick
+  )
+
+  const swapRoute = new Route(
+    [pool],
+    inToken,
+    outToken
+  )
+
+  const amountOut = await getOutputQuote(swapRoute, inToken, inAmount)
+
+  const uncheckedTrade = Trade.createUncheckedTrade({
+    route: swapRoute,
+    inputAmount: inAmount,
+    outputAmount: CurrencyAmount.fromRawAmount(
+      outToken,
+      amountOut.toString()
+    ),
+    tradeType: TradeType.EXACT_INPUT,
+  })
+
+
+  const options: SwapOptions = {
+    slippageTolerance: new Percent(50, 10_000), // 50 bips, or 0.50%
+    deadline: Math.floor(Date.now() / 1000) + 60 * 20, // 20 minutes from the current Unix time
+    recipient: MY_ADDRESS,
   }
 
-  if (route.methodParameters === undefined) {
-    console.log('No method parameters found');
-    process.exit(1);
-  }
-
-  console.log(`Quote Exact In: ${route.quote.toFixed(outToken.decimals)}`);
-  console.log(`Gas Adjusted Quote In: ${route.quoteGasAdjusted.toFixed(outToken.decimals)}`);
-  console.log(`Gas Used USD: ${route.estimatedGasUsedUSD.toFixed(2)}`);
-
+  const methodParameters = SwapRouter.swapCallParameters([uncheckedTrade], options)
 
   const transaction = {
-    data: route.methodParameters.calldata,
-    to: V3_SWAP_ROUTER_ADDRESS,
-    value: BigNumber.from(route.methodParameters.value),
+    data: methodParameters.calldata,
+    to: SWAP_ROUTER_ADDRESS,
+    value: methodParameters.value,
     from: MY_ADDRESS,
-    gasPrice: BigNumber.from(route.gasPriceWei),
-  };
+    // maxFeePerGas: MAX_FEE_PER_GAS,
+    // maxPriorityFeePerGas: MAX_PRIORITY_FEE_PER_GAS,
+  }
+
 
   const wallet = new ethers.Wallet(MY_PRIVATE_KEY, web3Provider);
 
@@ -85,6 +108,7 @@ async function swapTokens(inAmount: CurrencyAmount<Token>, outToken: Token) {
 }
 
 async function main() {
+  console.log("getting balances")
   // Get balances
   const wethBalance = await getBalance(MY_ADDRESS, WETH_ADDRESS, web3Provider);
   const usdcBalance = await getBalance(MY_ADDRESS, USDC_ADDRESS, web3Provider);
@@ -104,7 +128,7 @@ async function main() {
       console.log('amountToSwap: ', amountToSwap.toString(), 'WETH Base Units');
       const wethAmount = CurrencyAmount.fromRawAmount(WETH, amountToSwap.toString());
 
-      await swapTokens(wethAmount, USDC);
+      await swapTokens(wethAmount, WETH, USDC);
     } else {
       console.log('WETH price is higher than the average, do nothing');
     }
@@ -116,7 +140,7 @@ async function main() {
       const amountToSwap = getMaxUSDC(usdcBalance, MAX_USDC);
       console.log('amountToSwap: ', amountToSwap.toString(), 'USDC Base Units');
       const usdcAmount = CurrencyAmount.fromRawAmount(USDC, amountToSwap.toString());
-      await swapTokens(usdcAmount, WETH);
+      await swapTokens(usdcAmount, USDC, WETH);
 
     } else {
       console.log('USDC price is lower than the average, do nothing');

@@ -1,0 +1,16 @@
+import { BigNumber } from 'ethers';
+
+export const POOL_FACTORY_CONTRACT_ADDRESS = '0x1F98431c8aD98523631AE4a59f267346ea31F984'
+export const QUOTER_CONTRACT_ADDRESS = '0x61fFE014bA17989E743c5F6cB21bF9697530B21e'
+export const SWAP_ROUTER_ADDRESS = '0xE592427A0AEce92De3Edee1F18E0157C05861564'
+
+
+export const WETH_ADDRESS = '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1';
+export const USDC_ADDRESS = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831';
+
+export const DAYS_AVERAGE = 20;
+export const MAX_TRADE_USD = 25000;
+export const USDC_DECIMALS = 6;
+export const USDC_MULTIPLIER =  BigNumber.from(10).pow(USDC_DECIMALS);
+export const MAX_USDC = BigNumber.from(MAX_TRADE_USD).mul(USDC_MULTIPLIER);
+export const WETH_MULTIPLIER = BigNumber.from(10).pow(18);
